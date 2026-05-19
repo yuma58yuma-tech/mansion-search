@@ -11,9 +11,7 @@ def _install_playwright():
     subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], capture_output=True)
 
 
-
 def get_homes_archive_urls(mansions: list) -> dict:
-    """duckduckgo-searchライブラリでホームズarchiveページを検索して取得する。"""
     from ddgs import DDGS
     results = {}
     with DDGS() as ddgs:
@@ -129,7 +127,6 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                 return result
 
             def fetch_types(pg, mansion_list):
-                """ラジオボタン選択→次へ→/apart でタイプを取得する"""
                 aparts_url = pg.url
                 for m in mansion_list:
                     apart_id = m.pop("_apart_id", "")
@@ -226,10 +223,27 @@ def main():
     st.title("マンション調べ効率化ツール")
     st.caption("auひかり提供エリアのマンションを一括取得。ホームズの建物ページとGoogleマップを直接開けます。")
 
+    if "history" not in st.session_state:
+        st.session_state["history"] = []
+    if "postal_input" not in st.session_state:
+        st.session_state["postal_input"] = ""
+
+    # 検索履歴
+    if st.session_state["history"]:
+        st.markdown("**検索履歴**")
+        cols = st.columns(min(len(st.session_state["history"]), 5))
+        for i, entry in enumerate(reversed(st.session_state["history"][-5:])):
+            label = " / ".join(entry)
+            if cols[i].button(label, key=f"hist_{i}"):
+                st.session_state["postal_input"] = "\n".join(entry)
+                st.rerun()
+
     postal_input = st.text_area(
         "郵便番号を入力（1行に1つ、最大5件）",
+        value=st.session_state["postal_input"],
         placeholder="362-0031\n362-0033\n362-0035",
         height=150,
+        key="postal_textarea",
     )
 
     if st.button("検索開始", type="primary"):
@@ -238,6 +252,10 @@ def main():
         if not postal_codes:
             st.error("郵便番号を入力してください")
             return
+
+        # 履歴に追加（同じ組み合わせは重複しない）
+        if postal_codes not in st.session_state["history"]:
+            st.session_state["history"].append(postal_codes)
 
         all_mansions = []
         progress = st.progress(0)
@@ -272,6 +290,19 @@ def main():
         df = st.session_state["df"].copy()
 
         st.divider()
+
+        # タイプフィルター
+        all_types = sorted(df["タイプ"].dropna().unique().tolist()) if "タイプ" in df.columns else []
+        all_types = [t for t in all_types if t]
+        if all_types:
+            selected_types = st.multiselect(
+                "タイプで絞り込み",
+                options=all_types,
+                default=all_types,
+                placeholder="タイプを選択...",
+            )
+            df = df[df["タイプ"].isin(selected_types) | (df["タイプ"] == "")]
+
         col_a, col_b = st.columns([3, 1])
         with col_a:
             st.subheader(f"結果：{len(df)} 件")
