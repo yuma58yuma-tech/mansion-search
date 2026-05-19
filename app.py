@@ -3,6 +3,13 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 import pandas as pd
 import urllib.parse
 import re
+import subprocess
+import sys
+
+@st.cache_resource
+def _install_playwright():
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], capture_output=True)
+
 
 
 def get_homes_archive_urls(mansions: list) -> dict:
@@ -36,7 +43,10 @@ def scrape_au_mansions(postal_code: str) -> tuple:
     error = ""
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        )
         page = browser.new_page(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
@@ -211,6 +221,7 @@ def maps_url(name: str, addr: str) -> str:
 
 
 def main():
+    _install_playwright()
     st.set_page_config(page_title="マンション調べツール", layout="wide")
     st.title("マンション調べ効率化ツール")
     st.caption("auひかり提供エリアのマンションを一括取得。ホームズの建物ページとGoogleマップを直接開けます。")
