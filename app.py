@@ -312,21 +312,19 @@ def main():
             st.download_button("CSVダウンロード", csv, "mansions.csv", "text/csv")
 
         for _, row in df.iterrows():
-            c1, c2, c3 = st.columns([4, 2, 2])
+            c1, c2 = st.columns([4, 2])
             with c1:
                 label = row["マンション名"]
                 if row["棟名"]:
                     label += f"　{row['棟名']}"
                 type_badge = f"　`{row['タイプ']}`" if row.get("タイプ") else ""
                 st.write(f"**{label}**{type_badge}")
-                st.caption(f"〒{row['郵便番号']}　{row['住所']}")
+                st.code(f"{row['マンション名']} {row['住所']}", language=None)
             with c2:
                 if row["ホームズURL"]:
                     st.link_button("ホームズで確認", row["ホームズURL"], use_container_width=True)
                 else:
                     st.button("ホームズ（未取得）", disabled=True, use_container_width=True, key=f"homes_{_}")
-            with c3:
-                st.link_button("Googleマップ", maps_url(row["マンション名"], row["住所"]), use_container_width=True)
             st.divider()
 
 
