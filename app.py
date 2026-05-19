@@ -373,7 +373,8 @@ def main():
                 if row["ホームズURL"]:
                     st.link_button("ホームズで確認", row["ホームズURL"], use_container_width=True)
                 else:
-                    st.button("ホームズ（未取得）", disabled=True, use_container_width=True, key=f"homes_{_}")
+                    search_url = f"https://www.homes.co.jp/archive/search/?q={urllib.parse.quote(row['マンション名'])}"
+                    st.link_button("ホームズで検索", search_url, use_container_width=True)
             st.divider()
 
 
