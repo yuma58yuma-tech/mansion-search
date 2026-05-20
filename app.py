@@ -333,63 +333,6 @@ def scrape_au_mansions(postal_code: str) -> tuple:
     return mansions, error
 
 
-SINGLE_MADORI = {'1R', '1K', '1DK', '1LDK'}
-
-def scrape_homes_details(homes_url: str) -> dict:
-    """ホームズのアーカイブページから建物情報をまとめて取得する"""
-    result = {"分類": "不明", "間取り": "", "専有面積": "", "築年数": "", "階数": ""}
-    if not homes_url:
-        return result
-    import requests
-    from bs4 import BeautifulSoup
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-        res = requests.get(homes_url, headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        all_texts = list(soup.stripped_strings)
-        full_text = " ".join(all_texts)
-
-        # 間取り
-        madori_found = set()
-        for t in all_texts:
-            if re.fullmatch(r'\d+[RLDK]+', t.strip()):
-                madori_found.add(t.strip())
-        if madori_found:
-            result["間取り"] = "・".join(sorted(madori_found))
-            has_single = bool(madori_found & SINGLE_MADORI)
-            has_family = bool(madori_found - SINGLE_MADORI)
-            if has_single and has_family:
-                result["分類"] = "混合"
-            elif has_single:
-                result["分類"] = "一人暮らし向け"
-            else:
-                result["分類"] = "ファミリー向け"
-
-        # 専有面積（例: 25.5㎡ や 30㎡）
-        areas = re.findall(r'\d+(?:\.\d+)?㎡', full_text)
-        if areas:
-            nums = sorted(set(areas), key=lambda x: float(re.search(r'[\d.]+', x).group()))
-            result["専有面積"] = f"{nums[0]}〜{nums[-1]}" if len(nums) > 1 else nums[0]
-
-        # 築年数（例: 築14年 / 2010年築）
-        m = re.search(r'築(\d+)年', full_text)
-        if m:
-            result["築年数"] = f"築{m.group(1)}年"
-        else:
-            m2 = re.search(r'(\d{4})年築', full_text)
-            if m2:
-                import datetime
-                age = datetime.date.today().year - int(m2.group(1))
-                result["築年数"] = f"築{age}年"
-
-        # 階数（例: 6階建）
-        m = re.search(r'(\d+)階建', full_text)
-        if m:
-            result["階数"] = f"{m.group(1)}階建"
-
-    except Exception:
-        pass
-    return result
 
 
 def maps_url(name: str, addr: str) -> str:
@@ -401,29 +344,12 @@ def main():
     _install_playwright()
     st.set_page_config(page_title="マンション調べツール", layout="wide")
     st.title("マンション調べ効率化ツール")
-    st.caption("auひかり提供エリアのマンションを一括取得。ホームズの建物ページとGoogleマップを直接開けます。")
-
-    if "history" not in st.session_state:
-        st.session_state["history"] = []
-    if "postal_input" not in st.session_state:
-        st.session_state["postal_input"] = ""
-
-    # 検索履歴
-    if st.session_state["history"]:
-        st.markdown("**検索履歴**")
-        cols = st.columns(min(len(st.session_state["history"]), 5))
-        for i, entry in enumerate(reversed(st.session_state["history"][-5:])):
-            label = " / ".join(entry)
-            if cols[i].button(label, key=f"hist_{i}"):
-                st.session_state["postal_input"] = "\n".join(entry)
-                st.rerun()
+    st.caption("auひかり提供エリアのマンションを一括取得。ホームズの建物ページを直接開けます。")
 
     postal_input = st.text_area(
         "郵便番号を入力（1行に1つ、最大5件）",
-        value=st.session_state["postal_input"],
         placeholder="362-0031\n362-0033\n362-0035",
         height=150,
-        key="postal_textarea",
     )
 
     if st.button("検索開始", type="primary"):
@@ -432,10 +358,6 @@ def main():
         if not postal_codes:
             st.error("郵便番号を入力してください")
             return
-
-        # 履歴に追加（同じ組み合わせは重複しない）
-        if postal_codes not in st.session_state["history"]:
-            st.session_state["history"].append(postal_codes)
 
         all_mansions = []
         progress = st.progress(0)
@@ -456,11 +378,6 @@ def main():
             for m in all_mansions:
                 m["ホームズURL"] = homes_urls.get(m["マンション名"], "")
 
-            status.text(f"ホームズから建物情報を取得中... （{len(all_mansions)}件）")
-            for m in all_mansions:
-                details = scrape_homes_details(m["ホームズURL"])
-                m.update(details)
-
         progress.empty()
         for e in errors:
             st.warning(e)
@@ -475,38 +392,7 @@ def main():
         df = st.session_state["df"].copy()
 
         st.divider()
-
-        # フィルター行
-        filter_col1, filter_col2 = st.columns(2)
-        with filter_col1:
-            all_types = sorted(df["タイプ"].dropna().unique().tolist()) if "タイプ" in df.columns else []
-            all_types = [t for t in all_types if t]
-            if all_types:
-                selected_types = st.multiselect(
-                    "タイプで絞り込み",
-                    options=all_types,
-                    default=all_types,
-                    placeholder="タイプを選択...",
-                )
-                df = df[df["タイプ"].isin(selected_types) | (df["タイプ"] == "")]
-        with filter_col2:
-            if "分類" in df.columns:
-                all_cls = sorted(df["分類"].dropna().unique().tolist())
-                selected_cls = st.multiselect(
-                    "分類で絞り込み",
-                    options=all_cls,
-                    default=all_cls,
-                    placeholder="分類を選択...",
-                )
-                df = df[df["分類"].isin(selected_cls)]
-
-        col_a, col_b = st.columns([3, 1])
-        with col_a:
-            st.subheader(f"結果：{len(df)} 件")
-        with col_b:
-            cols = [c for c in ["郵便番号", "マンション名", "棟名", "タイプ", "住所", "ホームズURL"] if c in df.columns]
-            csv = df[cols].to_csv(index=False, encoding="utf-8-sig")
-            st.download_button("CSVダウンロード", csv, "mansions.csv", "text/csv")
+        st.subheader(f"結果：{len(df)} 件")
 
         for _, row in df.iterrows():
             c1, c2 = st.columns([4, 2])
@@ -515,17 +401,8 @@ def main():
                 if row["棟名"]:
                     label += f"　{row['棟名']}"
                 type_badge = f"　`{row['タイプ']}`" if row.get("タイプ") else ""
-                cls = row.get("分類", "")
-                cls_badge = f"　`{cls}`" if cls and cls != "不明" else ""
-                st.write(f"**{label}**{type_badge}{cls_badge}")
-                # 建物詳細
-                details_parts = []
-                if row.get("築年数"): details_parts.append(row["築年数"])
-                if row.get("階数"):   details_parts.append(row["階数"])
-                if row.get("間取り"): details_parts.append(row["間取り"])
-                if row.get("専有面積"): details_parts.append(row["専有面積"])
-                if details_parts:
-                    st.caption("　".join(details_parts))
+                st.write(f"**{label}**{type_badge}")
+                st.caption(f"〒{row['郵便番号']}　{row['住所']}")
                 st.code(f"{row['マンション名']} {row['住所']}", language=None)
             with c2:
                 if row["ホームズURL"]:
