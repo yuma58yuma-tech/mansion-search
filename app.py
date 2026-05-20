@@ -335,6 +335,39 @@ def scrape_au_mansions(postal_code: str) -> tuple:
 
 
 
+SINGLE_MADORI = {'1R', '1K', '1DK', '1LDK'}
+
+def classify_mansion(homes_url: str) -> str:
+    """ホームズページから間取りを取得して一人暮らし/ファミリー/混合を判定"""
+    if not homes_url:
+        return "不明"
+    import requests
+    from bs4 import BeautifulSoup
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        res = requests.get(homes_url, headers=headers, timeout=8)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        found = {t.strip() for t in soup.stripped_strings if re.fullmatch(r'\d+[RLDK]+', t.strip())}
+        if not found:
+            return "不明"
+        has_single = bool(found & SINGLE_MADORI)
+        has_family = bool(found - SINGLE_MADORI)
+        if has_single and has_family:
+            return "混合"
+        return "一人暮らし向け" if has_single else "ファミリー向け"
+    except Exception:
+        return "不明"
+
+def classify_all_parallel(mansions: list):
+    """並列処理で全マンションの分類を一気に取得"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(classify_mansion, m["ホームズURL"]): i for i, m in enumerate(mansions)}
+        for future in as_completed(futures):
+            idx = futures[future]
+            mansions[idx]["分類"] = future.result()
+
+
 def maps_url(name: str, addr: str) -> str:
     query = urllib.parse.quote(f"{name} {addr}")
     return f"https://www.google.com/maps/search/?api=1&query={query}"
@@ -378,6 +411,9 @@ def main():
             for m in all_mansions:
                 m["ホームズURL"] = homes_urls.get(m["マンション名"], "")
 
+            status.text(f"一人暮らし/ファミリー分類中... （{len(all_mansions)}件・並列処理）")
+            classify_all_parallel(all_mansions)
+
         progress.empty()
         for e in errors:
             st.warning(e)
@@ -392,6 +428,21 @@ def main():
         df = st.session_state["df"].copy()
 
         st.divider()
+
+        # フィルター
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            all_types = sorted([t for t in df["タイプ"].dropna().unique() if t]) if "タイプ" in df.columns else []
+            if all_types:
+                sel_types = st.multiselect("タイプで絞り込み", all_types, default=all_types)
+                df = df[df["タイプ"].isin(sel_types) | (df["タイプ"] == "")]
+        with fc2:
+            if "分類" in df.columns:
+                all_cls = sorted([c for c in df["分類"].dropna().unique() if c])
+                if all_cls:
+                    sel_cls = st.multiselect("分類で絞り込み", all_cls, default=all_cls)
+                    df = df[df["分類"].isin(sel_cls)]
+
         st.subheader(f"結果：{len(df)} 件")
 
         for _, row in df.iterrows():
@@ -401,7 +452,9 @@ def main():
                 if row["棟名"]:
                     label += f"　{row['棟名']}"
                 type_badge = f"　`{row['タイプ']}`" if row.get("タイプ") else ""
-                st.write(f"**{label}**{type_badge}")
+                cls = row.get("分類", "")
+                cls_badge = f"　`{cls}`" if cls and cls != "不明" else ""
+                st.write(f"**{label}**{type_badge}{cls_badge}")
                 st.caption(f"〒{row['郵便番号']}　{row['住所']}")
                 st.code(f"{row['マンション名']} {row['住所']}", language=None)
             with c2:
