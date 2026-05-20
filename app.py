@@ -36,6 +36,22 @@ def get_homes_archive_urls(mansions: list) -> dict:
             pass
         return ""
 
+    def bing_search(name: str) -> str:
+        """Bing検索でホームズのarchiveページを探す"""
+        try:
+            q = urllib.parse.quote(f'"{name}" site:homes.co.jp/archive')
+            res = requests.get(f"https://www.bing.com/search?q={q}", headers=HEADERS, timeout=10)
+            found = extract_b_url(res.text)
+            if found:
+                return found
+            # 引用符なしでも試す
+            q2 = urllib.parse.quote(f'{name} site:homes.co.jp/archive')
+            res2 = requests.get(f"https://www.bing.com/search?q={q2}", headers=HEADERS, timeout=10)
+            return extract_b_url(res2.text)
+        except Exception:
+            pass
+        return ""
+
     def homes_direct_search(name: str) -> str:
         try:
             q = urllib.parse.quote(name)
@@ -56,31 +72,80 @@ def get_homes_archive_urls(mansions: list) -> dict:
     def normalize(name: str) -> str:
         return re.sub(r'[　\s]', ' ', name).strip()
 
+    def get_name_variants(name: str) -> list:
+        """数字表記のバリエーションを生成（1,１,Ⅰ,I など）"""
+        variants = [name]
+        # 半角数字→全角
+        zen = name.translate(str.maketrans('0123456789', '０１２３４５６７８９'))
+        if zen != name:
+            variants.append(zen)
+        # 全角数字→半角
+        han = name.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        if han != name:
+            variants.append(han)
+        # 半角数字→全角ローマ数字
+        roman_zen = {'10':'Ⅹ','9':'Ⅸ','8':'Ⅷ','7':'Ⅶ','6':'Ⅵ','5':'Ⅴ','4':'Ⅳ','3':'Ⅲ','2':'Ⅱ','1':'Ⅰ'}
+        roman_han = {'10':'X','9':'IX','8':'VIII','7':'VII','6':'VI','5':'V','4':'IV','3':'III','2':'II','1':'I'}
+        for src, dst_map in [(han, roman_zen), (han, roman_han)]:
+            v = src
+            for num, roman in sorted(dst_map.items(), key=lambda x: -int(x[0])):
+                v = re.sub(r'(?<![0-9])' + num + r'(?![0-9])', roman, v)
+            if v != name:
+                variants.append(v)
+        # 全角ローマ数字→半角数字
+        rev = {'Ⅹ':'10','Ⅸ':'9','Ⅷ':'8','Ⅶ':'7','Ⅵ':'6','Ⅴ':'5','Ⅳ':'4','Ⅲ':'3','Ⅱ':'2','Ⅰ':'1'}
+        v = name
+        for roman, num in rev.items():
+            v = v.replace(roman, num)
+        if v != name:
+            variants.append(v)
+        # 半角ローマ数字→半角数字（末尾のみ）
+        rev2 = [('VIII','8'),('VII','7'),('VI','6'),('IV','4'),('IX','9'),('III','3'),('II','2'),('XI','11'),('X','10'),('V','5'),('I','1')]
+        v = name
+        for roman, num in rev2:
+            v = re.sub(r'(?<![A-Z])' + roman + r'(?![A-Z])', num, v)
+        if v != name:
+            variants.append(v)
+        return list(dict.fromkeys(variants))  # 重複除去
+
     results = {}
     with DDGS() as ddgs:
         for m in mansions:
             name = m["マンション名"]
             addr = m.get("住所", "")
             found = ""
+            variants = get_name_variants(name)
 
-            # 戦略1: 名前完全一致 + /archive
-            found = ddg_search(ddgs, f'"{name}" site:homes.co.jp/archive')
-
-            # 戦略2: 名前 + 住所 + /archive
-            if not found and addr:
-                found = ddg_search(ddgs, f'"{name}" {addr} site:homes.co.jp/archive')
+            # 戦略1-2: 全バリエーションでDDG検索（/archive限定）
+            for v in variants:
+                if found: break
+                found = ddg_search(ddgs, f'"{v}" site:homes.co.jp/archive')
+                if not found and addr:
+                    found = ddg_search(ddgs, f'"{v}" {addr} site:homes.co.jp/archive')
 
             # 戦略3: 引用符なし + /archive
             if not found:
-                found = ddg_search(ddgs, f'{normalize(name)} site:homes.co.jp/archive')
+                for v in variants:
+                    if found: break
+                    found = ddg_search(ddgs, f'{normalize(v)} site:homes.co.jp/archive')
 
-            # 戦略4: 名前 + homes.co.jp 全体
+            # 戦略4: homes.co.jp全体
             if not found:
-                found = ddg_search(ddgs, f'"{name}" site:homes.co.jp')
+                for v in variants:
+                    if found: break
+                    found = ddg_search(ddgs, f'"{v}" site:homes.co.jp')
 
-            # 戦略5: ホームズ検索ページを直接スクレイプ
+            # 戦略5: Bing検索（全バリエーション）
             if not found:
-                found = homes_direct_search(name)
+                for v in variants:
+                    if found: break
+                    found = bing_search(v)
+
+            # 戦略6: ホームズ検索ページを直接スクレイプ
+            if not found:
+                for v in variants:
+                    if found: break
+                    found = homes_direct_search(v)
 
             results[name] = found
             time.sleep(0.5)
