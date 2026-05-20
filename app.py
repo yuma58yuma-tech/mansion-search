@@ -271,8 +271,15 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                             pg.wait_for_timeout(3000)
                         content = pg.content()
                         match = re.search(r'タイプ([GVEMU])', content)
+                        has_mini_giga = 'ミニギガ' in content
+                        has_giga = 'ギガ' in content and not has_mini_giga
                         if match:
-                            m["タイプ"] = f"タイプ{match.group(1)}"
+                            speed = "（ミニギガ）" if has_mini_giga else "（ギガ）" if has_giga else ""
+                            m["タイプ"] = f"タイプ{match.group(1)}{speed}"
+                        elif has_mini_giga:
+                            m["タイプ"] = "ミニギガ"
+                        elif has_giga:
+                            m["タイプ"] = "ギガ"
                         pg.go_back()
                         pg.wait_for_load_state("domcontentloaded", timeout=10000)
                         pg.wait_for_timeout(500)
