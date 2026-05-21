@@ -12,11 +12,11 @@ def _install_playwright():
 
 
 def get_homes_archive_urls(mansions: list) -> dict:
-    """複数の戦略でホームズのarchiveページURLを取得する。"""
+    """並列処理＋複数戦略でホームズのarchiveページURLを取得する。"""
     import requests
     from bs4 import BeautifulSoup
     from ddgs import DDGS
-    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -26,129 +26,130 @@ def get_homes_archive_urls(mansions: list) -> dict:
         m = re.search(r'homes\.co\.jp/archive/(b-\d+)', text)
         return f"https://www.homes.co.jp/archive/{m.group(1)}/" if m else ""
 
-    def ddg_search(ddgs_obj, query: str) -> str:
+    def verify_url(url: str, name: str) -> bool:
+        """URLのページに実際にマンション名が含まれているか確認"""
         try:
-            for r in ddgs_obj.text(query, max_results=5):
-                found = extract_b_url(r.get("href", ""))
-                if found:
-                    return found
+            res = requests.get(url, headers=HEADERS, timeout=6)
+            # 名前の主要部分（最初の4文字）がページに含まれているか
+            core = re.sub(r'[\s　\-・]', '', name)[:4]
+            return core in res.text
         except Exception:
-            pass
-        return ""
-
-    def bing_search(name: str) -> str:
-        """Bing検索でホームズのarchiveページを探す"""
-        try:
-            q = urllib.parse.quote(f'"{name}" site:homes.co.jp/archive')
-            res = requests.get(f"https://www.bing.com/search?q={q}", headers=HEADERS, timeout=10)
-            found = extract_b_url(res.text)
-            if found:
-                return found
-            # 引用符なしでも試す
-            q2 = urllib.parse.quote(f'{name} site:homes.co.jp/archive')
-            res2 = requests.get(f"https://www.bing.com/search?q={q2}", headers=HEADERS, timeout=10)
-            return extract_b_url(res2.text)
-        except Exception:
-            pass
-        return ""
-
-    def homes_direct_search(name: str) -> str:
-        try:
-            q = urllib.parse.quote(name)
-            url = f"https://www.homes.co.jp/archive/search/?q={q}"
-            res = requests.get(url, headers=HEADERS, timeout=10)
-            found = extract_b_url(res.url)
-            if found:
-                return found
-            soup = BeautifulSoup(res.text, 'html.parser')
-            for a in soup.find_all('a', href=True):
-                found = extract_b_url(a['href'])
-                if found:
-                    return found
-        except Exception:
-            pass
-        return ""
+            return True  # 確認失敗時はOKとして扱う
 
     def normalize(name: str) -> str:
         return re.sub(r'[　\s]', ' ', name).strip()
 
     def get_name_variants(name: str) -> list:
-        """数字表記のバリエーションを生成（1,１,Ⅰ,I など）"""
         variants = [name]
-        # 半角数字→全角
         zen = name.translate(str.maketrans('0123456789', '０１２３４５６７８９'))
-        if zen != name:
-            variants.append(zen)
-        # 全角数字→半角
+        if zen != name: variants.append(zen)
         han = name.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
-        if han != name:
-            variants.append(han)
-        # 半角数字→全角ローマ数字
+        if han != name: variants.append(han)
         roman_zen = {'10':'Ⅹ','9':'Ⅸ','8':'Ⅷ','7':'Ⅶ','6':'Ⅵ','5':'Ⅴ','4':'Ⅳ','3':'Ⅲ','2':'Ⅱ','1':'Ⅰ'}
         roman_han = {'10':'X','9':'IX','8':'VIII','7':'VII','6':'VI','5':'V','4':'IV','3':'III','2':'II','1':'I'}
         for src, dst_map in [(han, roman_zen), (han, roman_han)]:
             v = src
             for num, roman in sorted(dst_map.items(), key=lambda x: -int(x[0])):
                 v = re.sub(r'(?<![0-9])' + num + r'(?![0-9])', roman, v)
-            if v != name:
-                variants.append(v)
-        # 全角ローマ数字→半角数字
+            if v != name: variants.append(v)
         rev = {'Ⅹ':'10','Ⅸ':'9','Ⅷ':'8','Ⅶ':'7','Ⅵ':'6','Ⅴ':'5','Ⅳ':'4','Ⅲ':'3','Ⅱ':'2','Ⅰ':'1'}
         v = name
-        for roman, num in rev.items():
-            v = v.replace(roman, num)
-        if v != name:
-            variants.append(v)
-        # 半角ローマ数字→半角数字（末尾のみ）
+        for roman, num in rev.items(): v = v.replace(roman, num)
+        if v != name: variants.append(v)
         rev2 = [('VIII','8'),('VII','7'),('VI','6'),('IV','4'),('IX','9'),('III','3'),('II','2'),('XI','11'),('X','10'),('V','5'),('I','1')]
         v = name
         for roman, num in rev2:
             v = re.sub(r'(?<![A-Z])' + roman + r'(?![A-Z])', num, v)
-        if v != name:
-            variants.append(v)
-        return list(dict.fromkeys(variants))  # 重複除去
+        if v != name: variants.append(v)
+        return list(dict.fromkeys(variants))
 
-    results = {}
-    with DDGS() as ddgs:
-        for m in mansions:
-            name = m["マンション名"]
-            addr = m.get("住所", "")
-            found = ""
-            variants = get_name_variants(name)
+    def search_one(name: str, addr: str) -> str:
+        """1件のマンションを検索（各スレッドが独自のDDGSインスタンスを持つ）"""
+        variants = get_name_variants(name)
+        found = ""
 
-            # 戦略1-2: 全バリエーションでDDG検索（/archive限定）
+        def ddg(query):
+            try:
+                with DDGS() as d:
+                    for r in d.text(query, max_results=5):
+                        url = extract_b_url(r.get("href", ""))
+                        if url:
+                            return url
+            except Exception:
+                pass
+            return ""
+
+        def bing(query):
+            try:
+                q = urllib.parse.quote(query)
+                res = requests.get(f"https://www.bing.com/search?q={q}", headers=HEADERS, timeout=8)
+                return extract_b_url(res.text)
+            except Exception:
+                return ""
+
+        def homes_direct(n):
+            try:
+                q = urllib.parse.quote(n)
+                res = requests.get(f"https://www.homes.co.jp/archive/search/?q={q}", headers=HEADERS, timeout=8)
+                url = extract_b_url(res.url)
+                if url: return url
+                soup = BeautifulSoup(res.text, 'html.parser')
+                for a in soup.find_all('a', href=True):
+                    url = extract_b_url(a['href'])
+                    if url: return url
+            except Exception:
+                pass
+            return ""
+
+        # 戦略1: 完全一致 + /archive
+        for v in variants:
+            if found: break
+            found = ddg(f'"{v}" site:homes.co.jp/archive')
+            if not found and addr:
+                found = ddg(f'"{v}" {addr} site:homes.co.jp/archive')
+
+        # 戦略2: 引用符なし
+        if not found:
             for v in variants:
                 if found: break
-                found = ddg_search(ddgs, f'"{v}" site:homes.co.jp/archive')
-                if not found and addr:
-                    found = ddg_search(ddgs, f'"{v}" {addr} site:homes.co.jp/archive')
+                found = ddg(f'{normalize(v)} site:homes.co.jp/archive')
 
-            # 戦略3: 引用符なし + /archive
-            if not found:
-                for v in variants:
-                    if found: break
-                    found = ddg_search(ddgs, f'{normalize(v)} site:homes.co.jp/archive')
+        # 戦略3: homes全体
+        if not found:
+            for v in variants:
+                if found: break
+                found = ddg(f'"{v}" site:homes.co.jp')
 
-            # 戦略4: homes.co.jp全体
-            if not found:
-                for v in variants:
-                    if found: break
-                    found = ddg_search(ddgs, f'"{v}" site:homes.co.jp')
+        # 戦略4: Bing
+        if not found:
+            for v in variants:
+                if found: break
+                found = bing(f'"{v}" site:homes.co.jp/archive')
+                if not found:
+                    found = bing(f'{v} site:homes.co.jp/archive')
 
-            # 戦略5: Bing検索（全バリエーション）
-            if not found:
-                for v in variants:
-                    if found: break
-                    found = bing_search(v)
+        # 戦略5: ホームズ直接検索
+        if not found:
+            for v in variants:
+                if found: break
+                found = homes_direct(v)
 
-            # 戦略6: ホームズ検索ページを直接スクレイプ
-            if not found:
-                for v in variants:
-                    if found: break
-                    found = homes_direct_search(v)
+        # 精度確認: 見つかったURLが本当に正しいか検証
+        if found and not verify_url(found, name):
+            found = ""  # 違うマンションのページなら破棄
 
-            results[name] = found
-            time.sleep(0.5)
+        return found
+
+    # 全マンションを並列検索
+    results = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(search_one, m["マンション名"], m.get("住所", "")): m["マンション名"]
+            for m in mansions
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            results[name] = future.result()
 
     return results
 
