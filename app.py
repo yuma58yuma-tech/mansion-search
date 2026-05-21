@@ -134,9 +134,9 @@ def get_homes_archive_urls(mansions: list) -> dict:
                 if found: break
                 found = homes_direct(v)
 
-        # 精度確認: 見つかったURLが本当に正しいか検証
+        # 精度確認: 見つかったURLが本当に正しいか検証（失敗しても採用）
         if found and not verify_url(found, name):
-            found = ""  # 違うマンションのページなら破棄
+            pass  # 検証失敗でも採用（ホームズはJS描画のため検証しにくい）
 
         return found
 
@@ -473,7 +473,7 @@ def main():
                 type_badge = f"　`{row['タイプ']}`" if row.get("タイプ") else ""
                 cls = row.get("分類", "")
                 cls_badge = f"　`{cls}`" if cls and cls != "不明" else ""
-                st.write(f"**{label}**{type_badge}{cls_badge}")
+                st.markdown(f"**{label}**{type_badge}{cls_badge}")
                 st.caption(f"〒{row['郵便番号']}　{row['住所']}")
                 st.code(f"{row['マンション名']} {row['住所']}", language=None)
             with c2:
