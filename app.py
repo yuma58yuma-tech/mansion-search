@@ -425,12 +425,10 @@ def main():
             all_mansions.extend(results_map.get(pc, []))
 
         if all_mansions:
-            status.text(f"ホームズのURLを取得中... （{len(all_mansions)}件）")
+            status.text(f"一人暮らし/ファミリー分類中... （{len(all_mansions)}件）")
             homes_urls = get_homes_archive_urls(all_mansions)
             for m in all_mansions:
                 m["ホームズURL"] = homes_urls.get(m["マンション名"], "")
-
-            status.text(f"一人暮らし/ファミリー分類中... （{len(all_mansions)}件・並列処理）")
             classify_all_parallel(all_mansions)
 
         progress.empty()
@@ -477,11 +475,8 @@ def main():
                 st.caption(f"〒{row['郵便番号']}　{row['住所']}")
                 st.code(f"{row['マンション名']} {row['住所']}", language=None)
             with c2:
-                if row["ホームズURL"]:
-                    st.link_button("ホームズで確認", row["ホームズURL"], use_container_width=True)
-                else:
-                    search_url = f"https://www.google.com/search?q={urllib.parse.quote(row['マンション名'] + ' site:homes.co.jp/archive')}"
-                    st.link_button("ホームズで検索", search_url, use_container_width=True)
+                google_url = f"https://www.google.com/search?q={urllib.parse.quote(row['マンション名'] + ' site:homes.co.jp/archive')}"
+                st.link_button("ホームズで確認", google_url, use_container_width=True)
             st.divider()
 
 
