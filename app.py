@@ -8,6 +8,7 @@ import sys
 
 @st.cache_resource
 def _install_playwright():
+    subprocess.run([sys.executable, "-m", "playwright", "install-deps", "chromium"], capture_output=True)
     subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], capture_output=True)
 
 
@@ -169,9 +170,8 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
-                "--no-zygote",
-                "--single-process",
                 "--disable-setuid-sandbox",
+                "--disable-extensions",
             ]
         )
         page = browser.new_page(
