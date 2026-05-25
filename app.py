@@ -405,24 +405,13 @@ def main():
         status = st.empty()
         errors = []
 
-        status.text(f"auサイト検索中... （{len(postal_codes)}件を並列処理）")
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        results_map = {}
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {executor.submit(scrape_au_mansions, pc): pc for pc in postal_codes}
-            done = 0
-            for future in as_completed(futures):
-                pc = futures[future]
-                mansions, err = future.result()
-                if err:
-                    errors.append(f"{pc}: {err}")
-                results_map[pc] = mansions
-                done += 1
-                progress.progress(done / len(postal_codes))
-
-        # 元の順序を保持して結合
-        for pc in postal_codes:
-            all_mansions.extend(results_map.get(pc, []))
+        for i, pc in enumerate(postal_codes):
+            status.text(f"auサイト検索中: {pc}　（{i + 1} / {len(postal_codes)} 件目）")
+            mansions, err = scrape_au_mansions(pc)
+            if err:
+                errors.append(f"{pc}: {err}")
+            all_mansions.extend(mansions)
+            progress.progress((i + 1) / len(postal_codes))
 
         if all_mansions:
             status.text(f"一人暮らし/ファミリー分類中... （{len(all_mansions)}件）")
