@@ -198,9 +198,13 @@ def scrape_au_mansions(postal_code: str) -> tuple:
             try:
                 pg.wait_for_url(
                     lambda url: "aparts" in url or "address" in url,
-                    timeout=25000
+                    timeout=30000
                 )
-                pg.wait_for_timeout(800)
+                try:
+                    pg.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                pg.wait_for_timeout(1500)
                 return True
             except Exception:
                 return False
@@ -296,12 +300,23 @@ def scrape_au_mansions(postal_code: str) -> tuple:
             url = page.url
 
             if "aparts" in url:
+                try:
+                    page.wait_for_function(
+                        "() => document.querySelectorAll('table tr').length > 1",
+                        timeout=10000
+                    )
+                except Exception:
+                    page.wait_for_timeout(2000)
                 mansions = extract_mansions(page)
                 mansions = fetch_types(page, mansions)
 
             elif "address" in url:
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8000)
+                except Exception:
+                    page.wait_for_timeout(2000)
                 chome_texts = []
-                for el in page.query_selector_all("td, a"):
+                for el in page.query_selector_all("td, a, li, span, div"):
                     t = el.inner_text().strip()
                     if re.search(r'\d+丁目', t) or re.match(r'^\d+$', t):
                         if t not in chome_texts:
