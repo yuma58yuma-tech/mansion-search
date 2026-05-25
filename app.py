@@ -316,7 +316,7 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                 except Exception:
                     page.wait_for_timeout(2000)
                 chome_texts = []
-                for el in page.query_selector_all("td, a, li, span, div"):
+                for el in page.query_selector_all("td, a"):
                     t = el.inner_text().strip()
                     if re.search(r'\d+丁目', t) or re.match(r'^\d+$', t):
                         if t not in chome_texts:
