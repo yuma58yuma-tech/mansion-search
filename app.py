@@ -597,7 +597,7 @@ def main():
             status.success(f"完了！{len(all_mansions)} 件見つかりました")
             st.session_state["df"] = pd.DataFrame(all_mansions)
         else:
-            status.warning("マンションが見つかりませんでした")
+            status.empty()
 
     if "df" in st.session_state:
         df = st.session_state["df"].copy()
