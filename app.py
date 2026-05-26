@@ -41,14 +41,19 @@ def scrape_au_mansions(postal_code: str) -> tuple:
 
         def submit_form(pg):
             pg.goto("https://bb-application.au.kddi.com/auhikari/zipcode", timeout=30000)
-            pg.wait_for_load_state("domcontentloaded", timeout=20000)
-            pg.wait_for_timeout(1500)
-            pg.fill('#sendzip1', zip_clean[:3])
-            pg.wait_for_timeout(300)
-            pg.fill('#sendzip2', zip_clean[3:])
+            pg.wait_for_load_state("networkidle", timeout=20000)
+            pg.wait_for_timeout(2000)
+            # 人間らしく1文字ずつタイプ
+            pg.click('#sendzip1')
+            pg.wait_for_timeout(400)
+            pg.locator('#sendzip1').type(zip_clean[:3], delay=120)
             pg.wait_for_timeout(500)
+            pg.click('#sendzip2')
+            pg.wait_for_timeout(400)
+            pg.locator('#sendzip2').type(zip_clean[3:], delay=120)
+            pg.wait_for_timeout(600)
             pg.check('#mantion')
-            pg.wait_for_timeout(1000)
+            pg.wait_for_timeout(1200)
             pg.evaluate("""
                 () => {
                     document.querySelectorAll('input[type="submit"]').forEach(s => {
@@ -57,7 +62,7 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                     });
                 }
             """)
-            pg.wait_for_timeout(500)
+            pg.wait_for_timeout(600)
             pg.locator('input[type="submit"]').first.click(timeout=5000)
             try:
                 pg.wait_for_url(
