@@ -308,29 +308,49 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                 except Exception:
                     page.wait_for_timeout(2000)
                 mansions = extract_mansions(page)
-                mansions = fetch_types(page, mansions)
+                if not mansions:
+                    # テーブルが見つからない場合、ページ内テキストから物件名を探す
+                    page_text = page.inner_text("body")
+                    if "マンション" not in page_text and "物件" not in page_text:
+                        error = f"対象エリアにauひかり対応マンションがありません"
+                    else:
+                        error = f"ページ構造変更の可能性あり（URL: {url.split('?')[0]}）"
+                else:
+                    mansions = fetch_types(page, mansions)
 
             elif "address" in url:
                 try:
                     page.wait_for_load_state("networkidle", timeout=8000)
                 except Exception:
                     page.wait_for_timeout(2000)
-                chome_texts = []
-                for el in page.query_selector_all("td, a"):
-                    t = el.inner_text().strip()
-                    if re.search(r'\d+丁目', t) or re.match(r'^\d+$', t):
-                        if t not in chome_texts:
-                            chome_texts.append(t)
-
+                # リンク要素から丁目テキストを取得して直接クリック
                 address_url = page.url
-                for ct in chome_texts:
+                link_els = page.query_selector_all("td a, a")
+                chome_links = []
+                seen = set()
+                for el in link_els:
+                    t = el.inner_text().strip()
+                    if t and t not in seen and (re.search(r'\d+丁目', t) or re.match(r'^\d+$', t)):
+                        seen.add(t)
+                        chome_links.append(t)
+
+                if not chome_links:
+                    error = f"住所選択ページで選択肢が見つかりません（URL: {url.split('?')[0]}）"
+
+                for ct in chome_links:
                     try:
-                        page.click(f'text="{ct}"', timeout=5000)
+                        # テキストで要素を再取得してクリック
+                        els = page.query_selector_all("td a, a")
+                        target = next((e for e in els if e.inner_text().strip() == ct), None)
+                        if target:
+                            target.click(timeout=5000)
+                        else:
+                            page.click(f'text="{ct}"', timeout=5000)
                         try:
                             page.wait_for_url(lambda u: "aparts" in u, timeout=10000)
                         except Exception:
                             page.wait_for_load_state("load", timeout=10000)
-                        page.wait_for_timeout(500)
+                        page.wait_for_timeout(800)
                         if "aparts" in page.url:
                             chunk = extract_mansions(page)
                             chunk = fetch_types(page, chunk)
@@ -344,7 +364,7 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                     except Exception:
                         continue
             else:
-                error = f"予期しないページ: {url}"
+                error = f"予期しないページ: {url.split('?')[0]}"
 
         except PWTimeout:
             error = "タイムアウト: auサイトへの接続に失敗しました"
