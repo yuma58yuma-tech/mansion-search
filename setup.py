@@ -1,15 +1,18 @@
-import subprocess, sys
-import streamlit as st
+"""
+マンション調べツール セットアップスクリプト
+このファイルを実行するだけで全て揃います。
+  python setup.py
+"""
+import os, subprocess, sys
+
+BASE = r"C:\Users\yuma5\mansion-search"
+os.makedirs(BASE, exist_ok=True)
+
+# ── app.py ──────────────────────────────────────────────────────────────────
+APP = r'''import streamlit as st
 from playwright.sync_api import sync_playwright
 import re
 import urllib.parse
-
-@st.cache_resource
-def _ensure_playwright():
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
-        capture_output=True
-    )
 
 
 def scrape_au(zip_code: str):
@@ -194,7 +197,6 @@ def type_match(m_type: str, selected: list) -> bool:
 
 
 def main():
-    _ensure_playwright()
     st.set_page_config(page_title="マンション調べツール", layout="wide")
     st.title("マンション調べ効率化ツール")
 
@@ -243,3 +245,36 @@ def main():
 
 if __name__ == "__main__":
     main()
+'''
+
+# ── requirements.txt ────────────────────────────────────────────────────────
+REQS = "streamlit\nplaywright\nplaywright-stealth\n"
+
+# ── 起動.bat ─────────────────────────────────────────────────────────────────
+BAT = (
+    "@echo off\n"
+    "cd /d \"%~dp0\"\n"
+    "python -m streamlit run app.py --server.port 8504\n"
+    "start microsoft-edge:http://127.0.0.1:8504\n"
+    "pause\n"
+)
+
+# ── ファイル書き出し ──────────────────────────────────────────────────────────
+with open(os.path.join(BASE, "app.py"),          "w", encoding="utf-8") as f: f.write(APP)
+with open(os.path.join(BASE, "requirements.txt"),"w", encoding="utf-8") as f: f.write(REQS)
+with open(os.path.join(BASE, "起動.bat"),         "w", encoding="utf-8") as f: f.write(BAT)
+print("ファイル作成完了")
+
+# ── パッケージインストール ────────────────────────────────────────────────────
+print("パッケージをインストール中...")
+subprocess.run([sys.executable, "-m", "pip", "install", "-r",
+                os.path.join(BASE, "requirements.txt"), "-q"], check=True)
+
+print("Playwright chromium をインストール中...")
+subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+
+print("\nセットアップ完了！")
+print("起動するには:")
+print(f'  cd "{BASE}"')
+print(f'  python -m streamlit run app.py --server.port 8504')
+print(f'  ブラウザで http://127.0.0.1:8504 を開く')
