@@ -1,7 +1,7 @@
 """
-マンション調べツール セットアップスクリプト
-このファイルを実行するだけで全て揃います。
+mansion-search セットアップスクリプト
   python setup.py
+で全ファイル生成 + パッケージインストールが完了します。
 """
 import os, subprocess, sys
 
@@ -247,10 +247,55 @@ if __name__ == "__main__":
     main()
 '''
 
+# ── Dockerfile ───────────────────────────────────────────────────────────────
+DOCKERFILE = '''FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \\
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \\
+    libcups2 libdrm2 libxkbcommon0 libxcomposite1 \\
+    libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \\
+    libx11-6 libxext6 libxcb1 libx11-xcb1 \\
+    wget curl ca-certificates fonts-noto-cjk \\
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+RUN python -m playwright install chromium
+
+COPY app.py .
+COPY packages.txt .
+
+EXPOSE 8501
+
+CMD python -m streamlit run app.py \\
+    --server.port=${PORT:-8501} \\
+    --server.address=0.0.0.0 \\
+    --server.headless=true
+'''
+
 # ── requirements.txt ────────────────────────────────────────────────────────
 REQS = "streamlit\nplaywright\nplaywright-stealth\n"
 
-# ── 起動.bat ─────────────────────────────────────────────────────────────────
+# ── packages.txt（Streamlit Cloud用） ────────────────────────────────────────
+PACKAGES = """libnss3
+libnspr4
+libatk1.0-0
+libatk-bridge2.0-0
+libcups2
+libdrm2
+libxkbcommon0
+libxcomposite1
+libxdamage1
+libxfixes3
+libxrandr2
+libgbm1
+libasound2
+"""
+
+# ── 起動.bat（ローカル用） ────────────────────────────────────────────────────
 BAT = (
     "@echo off\n"
     "cd /d \"%~dp0\"\n"
@@ -260,9 +305,16 @@ BAT = (
 )
 
 # ── ファイル書き出し ──────────────────────────────────────────────────────────
-with open(os.path.join(BASE, "app.py"),          "w", encoding="utf-8") as f: f.write(APP)
-with open(os.path.join(BASE, "requirements.txt"),"w", encoding="utf-8") as f: f.write(REQS)
-with open(os.path.join(BASE, "起動.bat"),         "w", encoding="utf-8") as f: f.write(BAT)
+files = {
+    "app.py":          APP,
+    "Dockerfile":      DOCKERFILE,
+    "requirements.txt": REQS,
+    "packages.txt":    PACKAGES,
+    "起動.bat":         BAT,
+}
+for name, content in files.items():
+    with open(os.path.join(BASE, name), "w", encoding="utf-8") as f:
+        f.write(content)
 print("ファイル作成完了")
 
 # ── パッケージインストール ────────────────────────────────────────────────────
@@ -274,7 +326,5 @@ print("Playwright chromium をインストール中...")
 subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
 
 print("\nセットアップ完了！")
-print("起動するには:")
-print(f'  cd "{BASE}"')
-print(f'  python -m streamlit run app.py --server.port 8504')
-print(f'  ブラウザで http://127.0.0.1:8504 を開く')
+print("ローカル起動: 起動.bat をダブルクリック")
+print("Railway URL: https://mansion-search-production.up.railway.app")
