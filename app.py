@@ -6,152 +6,10 @@ import re
 import subprocess
 import sys
 
+
 @st.cache_resource
 def _install_playwright():
     subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], capture_output=True)
-
-
-def get_homes_archive_urls(mansions: list) -> dict:
-    """並列処理＋複数戦略でホームズのarchiveページURLを取得する。"""
-    import requests
-    from bs4 import BeautifulSoup
-    from ddgs import DDGS
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    def extract_b_url(text: str) -> str:
-        m = re.search(r'homes\.co\.jp/archive/(b-\d+)', text)
-        return f"https://www.homes.co.jp/archive/{m.group(1)}/" if m else ""
-
-    def verify_url(url: str, name: str) -> bool:
-        """URLのページに実際にマンション名が含まれているか確認"""
-        try:
-            res = requests.get(url, headers=HEADERS, timeout=6)
-            # 名前の主要部分（最初の4文字）がページに含まれているか
-            core = re.sub(r'[\s　\-・]', '', name)[:4]
-            return core in res.text
-        except Exception:
-            return True  # 確認失敗時はOKとして扱う
-
-    def normalize(name: str) -> str:
-        return re.sub(r'[　\s]', ' ', name).strip()
-
-    def get_name_variants(name: str) -> list:
-        variants = [name]
-        zen = name.translate(str.maketrans('0123456789', '０１２３４５６７８９'))
-        if zen != name: variants.append(zen)
-        han = name.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
-        if han != name: variants.append(han)
-        roman_zen = {'10':'Ⅹ','9':'Ⅸ','8':'Ⅷ','7':'Ⅶ','6':'Ⅵ','5':'Ⅴ','4':'Ⅳ','3':'Ⅲ','2':'Ⅱ','1':'Ⅰ'}
-        roman_han = {'10':'X','9':'IX','8':'VIII','7':'VII','6':'VI','5':'V','4':'IV','3':'III','2':'II','1':'I'}
-        for src, dst_map in [(han, roman_zen), (han, roman_han)]:
-            v = src
-            for num, roman in sorted(dst_map.items(), key=lambda x: -int(x[0])):
-                v = re.sub(r'(?<![0-9])' + num + r'(?![0-9])', roman, v)
-            if v != name: variants.append(v)
-        rev = {'Ⅹ':'10','Ⅸ':'9','Ⅷ':'8','Ⅶ':'7','Ⅵ':'6','Ⅴ':'5','Ⅳ':'4','Ⅲ':'3','Ⅱ':'2','Ⅰ':'1'}
-        v = name
-        for roman, num in rev.items(): v = v.replace(roman, num)
-        if v != name: variants.append(v)
-        rev2 = [('VIII','8'),('VII','7'),('VI','6'),('IV','4'),('IX','9'),('III','3'),('II','2'),('XI','11'),('X','10'),('V','5'),('I','1')]
-        v = name
-        for roman, num in rev2:
-            v = re.sub(r'(?<![A-Z])' + roman + r'(?![A-Z])', num, v)
-        if v != name: variants.append(v)
-        return list(dict.fromkeys(variants))
-
-    def search_one(name: str, addr: str) -> str:
-        """1件のマンションを検索（各スレッドが独自のDDGSインスタンスを持つ）"""
-        variants = get_name_variants(name)
-        found = ""
-
-        def ddg(query):
-            try:
-                with DDGS() as d:
-                    for r in d.text(query, max_results=5):
-                        url = extract_b_url(r.get("href", ""))
-                        if url:
-                            return url
-            except Exception:
-                pass
-            return ""
-
-        def bing(query):
-            try:
-                q = urllib.parse.quote(query)
-                res = requests.get(f"https://www.bing.com/search?q={q}", headers=HEADERS, timeout=8)
-                return extract_b_url(res.text)
-            except Exception:
-                return ""
-
-        def homes_direct(n):
-            try:
-                q = urllib.parse.quote(n)
-                res = requests.get(f"https://www.homes.co.jp/archive/search/?q={q}", headers=HEADERS, timeout=8)
-                url = extract_b_url(res.url)
-                if url: return url
-                soup = BeautifulSoup(res.text, 'html.parser')
-                for a in soup.find_all('a', href=True):
-                    url = extract_b_url(a['href'])
-                    if url: return url
-            except Exception:
-                pass
-            return ""
-
-        # 戦略1: 完全一致 + /archive
-        for v in variants:
-            if found: break
-            found = ddg(f'"{v}" site:homes.co.jp/archive')
-            if not found and addr:
-                found = ddg(f'"{v}" {addr} site:homes.co.jp/archive')
-
-        # 戦略2: 引用符なし
-        if not found:
-            for v in variants:
-                if found: break
-                found = ddg(f'{normalize(v)} site:homes.co.jp/archive')
-
-        # 戦略3: homes全体
-        if not found:
-            for v in variants:
-                if found: break
-                found = ddg(f'"{v}" site:homes.co.jp')
-
-        # 戦略4: Bing
-        if not found:
-            for v in variants:
-                if found: break
-                found = bing(f'"{v}" site:homes.co.jp/archive')
-                if not found:
-                    found = bing(f'{v} site:homes.co.jp/archive')
-
-        # 戦略5: ホームズ直接検索
-        if not found:
-            for v in variants:
-                if found: break
-                found = homes_direct(v)
-
-        # 精度確認: 見つかったURLが本当に正しいか検証（失敗しても採用）
-        if found and not verify_url(found, name):
-            pass  # 検証失敗でも採用（ホームズはJS描画のため検証しにくい）
-
-        return found
-
-    # 全マンションを並列検索
-    results = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {
-            executor.submit(search_one, m["マンション名"], m.get("住所", "")): m["マンション名"]
-            for m in mansions
-        }
-        for future in as_completed(futures):
-            name = futures[future]
-            results[name] = future.result()
-
-    return results
 
 
 def scrape_au_mansions(postal_code: str) -> tuple:
@@ -170,7 +28,6 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
-                "--window-size=1280,800",
             ]
         )
         page = browser.new_page(
@@ -182,15 +39,12 @@ def scrape_au_mansions(postal_code: str) -> tuple:
             pg.goto("https://bb-application.au.kddi.com/auhikari/zipcode", timeout=30000)
             pg.wait_for_load_state("domcontentloaded", timeout=20000)
             pg.wait_for_timeout(1500)
-
             pg.fill('#sendzip1', zip_clean[:3])
-            pg.wait_for_timeout(200)
-            pg.fill('#sendzip2', zip_clean[3:])
             pg.wait_for_timeout(300)
-
+            pg.fill('#sendzip2', zip_clean[3:])
+            pg.wait_for_timeout(500)
             pg.check('#mantion')
             pg.wait_for_timeout(1000)
-
             pg.evaluate("""
                 () => {
                     document.querySelectorAll('input[type="submit"]').forEach(s => {
@@ -199,9 +53,8 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                     });
                 }
             """)
-            pg.wait_for_timeout(300)
+            pg.wait_for_timeout(500)
             pg.locator('input[type="submit"]').first.click(timeout=5000)
-
             try:
                 pg.wait_for_url(
                     lambda url: "aparts" in url or "address" in url,
@@ -230,9 +83,8 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                     continue
 
             if not success:
-                error = "auサイトへの接続に失敗しました（時間をおいて再試行してください）"
                 browser.close()
-                return [], error
+                return [], "auサイトへの接続に失敗しました（時間をおいて再試行してください）"
 
             def extract_mansions(pg):
                 result = []
@@ -243,8 +95,7 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                         name = cells[0].inner_text().strip()
                         bldg = cells[1].inner_text().strip()
                         addr = cells[2].inner_text().strip()
-                        skip = {"マンション名", "物件名", "建物名", ""}
-                        if name not in skip:
+                        if name not in {"マンション名", "物件名", "建物名", ""}:
                             apart_id = ""
                             if len(cells) > 3:
                                 radio = cells[3].query_selector("input[type='radio']")
@@ -283,12 +134,12 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                             pg.wait_for_timeout(3000)
                         content = pg.content()
                         match = re.search(r'タイプ([GVEMU])', content)
-                        has_mini_giga = 'ミニギガ' in content
-                        has_giga = 'ギガ' in content and not has_mini_giga
+                        has_mini = 'ミニギガ' in content
+                        has_giga = 'ギガ' in content and not has_mini
                         if match:
-                            speed = "（ミニギガ）" if has_mini_giga else "（ギガ）" if has_giga else ""
+                            speed = "（ミニギガ）" if has_mini else "（ギガ）" if has_giga else ""
                             m["タイプ"] = f"タイプ{match.group(1)}{speed}"
-                        elif has_mini_giga:
+                        elif has_mini:
                             m["タイプ"] = "ミニギガ"
                         elif has_giga:
                             m["タイプ"] = "ギガ"
@@ -307,13 +158,6 @@ def scrape_au_mansions(postal_code: str) -> tuple:
             url = page.url
 
             if "aparts" in url:
-                try:
-                    page.wait_for_function(
-                        "() => document.querySelectorAll('table tr').length > 1",
-                        timeout=10000
-                    )
-                except Exception:
-                    page.wait_for_timeout(2000)
                 mansions = extract_mansions(page)
                 if mansions:
                     mansions = fetch_types(page, mansions)
@@ -323,20 +167,17 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                     page.wait_for_load_state("networkidle", timeout=8000)
                 except Exception:
                     page.wait_for_timeout(2000)
-                # リンク要素から丁目テキストを取得して直接クリック
                 address_url = page.url
                 link_els = page.query_selector_all("td a, a")
-                chome_links = []
                 seen = set()
+                chome_links = []
                 for el in link_els:
                     t = el.inner_text().strip()
                     if t and t not in seen and (re.search(r'\d+丁目', t) or re.match(r'^\d+$', t)):
                         seen.add(t)
                         chome_links.append(t)
-
                 for ct in chome_links:
                     try:
-                        # テキストで要素を再取得してクリック
                         els = page.query_selector_all("td a, a")
                         target = next((e for e in els if e.inner_text().strip() == ct), None)
                         if target:
@@ -373,61 +214,20 @@ def scrape_au_mansions(postal_code: str) -> tuple:
     return mansions, error
 
 
-
-
-SINGLE_MADORI = {'1R', '1K', '1DK', '1LDK'}
-
-def classify_mansion(homes_url: str) -> str:
-    """ホームズページから間取りを取得して一人暮らし/ファミリー/混合を判定"""
-    if not homes_url:
-        return "不明"
-    import requests
-    from bs4 import BeautifulSoup
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-        res = requests.get(homes_url, headers=headers, timeout=8)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        found = {t.strip() for t in soup.stripped_strings if re.fullmatch(r'\d+[RLDK]+', t.strip())}
-        if not found:
-            return "不明"
-        has_single = bool(found & SINGLE_MADORI)
-        has_family = bool(found - SINGLE_MADORI)
-        if has_single and has_family:
-            return "混合"
-        return "一人暮らし向け" if has_single else "ファミリー向け"
-    except Exception:
-        return "不明"
-
-def classify_all_parallel(mansions: list):
-    """並列処理で全マンションの分類を一気に取得"""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(classify_mansion, m["ホームズURL"]): i for i, m in enumerate(mansions)}
-        for future in as_completed(futures):
-            idx = futures[future]
-            mansions[idx]["分類"] = future.result()
-
-
-def maps_url(name: str, addr: str) -> str:
-    query = urllib.parse.quote(f"{name} {addr}")
-    return f"https://www.google.com/maps/search/?api=1&query={query}"
-
-
 def main():
     _install_playwright()
     st.set_page_config(page_title="マンション調べツール", layout="wide")
     st.title("マンション調べ効率化ツール")
-    st.caption("auひかり提供エリアのマンションを一括取得。ホームズの建物ページを直接開けます。")
+    st.caption("auひかり提供エリアのマンションを一括取得")
 
     postal_input = st.text_area(
         "郵便番号を入力（1行に1つ、最大5件）",
-        placeholder="362-0031\n362-0033\n362-0035",
-        height=150,
+        placeholder="362-0031\n362-0033",
+        height=130,
     )
 
     if st.button("検索開始", type="primary"):
         postal_codes = [p.strip() for p in postal_input.strip().split("\n") if p.strip()][:5]
-
         if not postal_codes:
             st.error("郵便番号を入力してください")
             return
@@ -438,19 +238,12 @@ def main():
         errors = []
 
         for i, pc in enumerate(postal_codes):
-            status.text(f"auサイト検索中: {pc}　（{i + 1} / {len(postal_codes)} 件目）")
+            status.text(f"検索中: {pc}　（{i + 1} / {len(postal_codes)} 件目）")
             mansions, err = scrape_au_mansions(pc)
             if err:
                 errors.append(f"{pc}: {err}")
             all_mansions.extend(mansions)
             progress.progress((i + 1) / len(postal_codes))
-
-        if all_mansions:
-            status.text(f"一人暮らし/ファミリー分類中... （{len(all_mansions)}件）")
-            homes_urls = get_homes_archive_urls(all_mansions)
-            for m in all_mansions:
-                m["ホームズURL"] = homes_urls.get(m["マンション名"], "")
-            classify_all_parallel(all_mansions)
 
         progress.empty()
         for e in errors:
@@ -464,22 +257,13 @@ def main():
 
     if "df" in st.session_state:
         df = st.session_state["df"].copy()
-
         st.divider()
 
-        # フィルター
-        fc1, fc2 = st.columns(2)
-        with fc1:
-            all_types = sorted([t for t in df["タイプ"].dropna().unique() if t]) if "タイプ" in df.columns else []
-            if all_types:
-                sel_types = st.multiselect("タイプで絞り込み", all_types, default=all_types)
-                df = df[df["タイプ"].isin(sel_types) | (df["タイプ"] == "")]
-        with fc2:
-            if "分類" in df.columns:
-                all_cls = sorted([c for c in df["分類"].dropna().unique() if c])
-                if all_cls:
-                    sel_cls = st.multiselect("分類で絞り込み", all_cls, default=all_cls)
-                    df = df[df["分類"].isin(sel_cls)]
+        # タイプで絞り込み
+        all_types = sorted([t for t in df["タイプ"].dropna().unique() if t]) if "タイプ" in df.columns else []
+        if all_types:
+            sel_types = st.multiselect("タイプで絞り込み", all_types, default=all_types)
+            df = df[df["タイプ"].isin(sel_types) | (df["タイプ"] == "")]
 
         st.subheader(f"結果：{len(df)} 件")
 
@@ -487,17 +271,15 @@ def main():
             c1, c2 = st.columns([4, 2])
             with c1:
                 label = row["マンション名"]
-                if row["棟名"]:
+                if row.get("棟名"):
                     label += f"　{row['棟名']}"
                 type_badge = f"　`{row['タイプ']}`" if row.get("タイプ") else ""
-                cls = row.get("分類", "")
-                cls_badge = f"　`{cls}`" if cls and cls != "不明" else ""
-                st.markdown(f"**{label}**{type_badge}{cls_badge}")
+                st.markdown(f"**{label}**{type_badge}")
                 st.caption(f"〒{row['郵便番号']}　{row['住所']}")
                 st.code(f"{row['マンション名']} {row['住所']}", language=None)
             with c2:
                 google_url = f"https://www.google.com/search?q={urllib.parse.quote(row['マンション名'] + ' site:homes.co.jp/archive')}"
-                st.link_button("ホームズで確認", google_url, use_container_width=True)
+                st.link_button("ホームズで検索", google_url, use_container_width=True)
             st.divider()
 
 
