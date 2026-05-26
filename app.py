@@ -155,155 +155,37 @@ def get_homes_archive_urls(mansions: list) -> dict:
 
 
 def scrape_au_mansions(postal_code: str) -> tuple:
-    """requestsでauサイトをスクレイピング（高速・bot検知回避）"""
-    import requests as req
-    from bs4 import BeautifulSoup as BS
-
     zip_clean = re.sub(r'[^\d]', '', postal_code)
     if len(zip_clean) != 7:
         return [], "郵便番号は7桁で入力してください"
 
-    BASE = "https://bb-application.au.kddi.com"
-    session = req.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
-        "Referer": f"{BASE}/auhikari/zipcode",
-    })
-
-    def parse_table(soup):
-        result = []
-        skip = {"マンション名", "物件名", "建物名", ""}
-        for row in soup.select("table tr"):
-            cells = row.find_all("td")
-            if len(cells) >= 3:
-                name = cells[0].get_text(strip=True)
-                bldg = cells[1].get_text(strip=True)
-                addr = cells[2].get_text(strip=True)
-                if name and name not in skip:
-                    apart_id = ""
-                    if len(cells) > 3:
-                        radio = cells[3].find("input", {"type": "radio"})
-                        apart_id = radio.get("value", "") if radio else ""
-                    result.append({
-                        "マンション名": name,
-                        "棟名": bldg,
-                        "住所": addr,
-                        "郵便番号": f"{zip_clean[:3]}-{zip_clean[3:]}",
-                        "_apart_id": apart_id,
-                    })
-        return result
-
-    def get_type(aparts_soup, apart_id):
-        if not apart_id:
-            return ""
-        try:
-            form = aparts_soup.find("form")
-            if not form:
-                return ""
-            action = form.get("action", "")
-            form_url = BASE + action if action.startswith("/") else action
-            data = {}
-            for inp in form.find_all("input", {"type": "hidden"}):
-                if inp.get("name"):
-                    data[inp["name"]] = inp.get("value", "")
-            data["apart_id"] = apart_id
-            for btn in form.find_all("input", {"type": "submit"}):
-                if btn.get("name"):
-                    data[btn["name"]] = btn.get("value", "")
-            r = session.post(form_url, data=data, timeout=15)
-            content = r.text
-            match = re.search(r'タイプ([GVEMU])', content)
-            has_mini = 'ミニギガ' in content
-            has_giga = 'ギガ' in content and not has_mini
-            if match:
-                speed = "（ミニギガ）" if has_mini else "（ギガ）" if has_giga else ""
-                return f"タイプ{match.group(1)}{speed}"
-            elif has_mini:
-                return "ミニギガ"
-            elif has_giga:
-                return "ギガ"
-        except Exception:
-            pass
-        return ""
-
-    try:
-        # Step1: フォームページを取得
-        r0 = session.get(f"{BASE}/auhikari/zipcode", timeout=15)
-        soup0 = BS(r0.text, "html.parser")
-        form = soup0.find("form")
-        if not form:
-            return [], "サイト構造が変更されました（フォームが見つかりません）"
-
-        action = form.get("action", "/auhikari/zipcode")
-        form_url = BASE + action if action.startswith("/") else action
-
-        post_data = {}
-        for inp in form.find_all("input", {"type": "hidden"}):
-            if inp.get("name"):
-                post_data[inp["name"]] = inp.get("value", "")
-        post_data["sendzip1"] = zip_clean[:3]
-        post_data["sendzip2"] = zip_clean[3:]
-
-        # マンションラジオボタンを取得
-        radio_el = form.find("input", {"id": "mantion"}) or form.find("input", {"type": "radio"})
-        if radio_el and radio_el.get("name"):
-            post_data[radio_el["name"]] = radio_el.get("value", "on")
-        else:
-            post_data["mantion"] = "on"
-
-        # Step2: フォーム送信
-        method = form.get("method", "post").lower()
-        r1 = session.post(form_url, data=post_data, timeout=20) if method == "post" \
-             else session.get(form_url, params=post_data, timeout=20)
-        r1_url = r1.url
-        soup1 = BS(r1.text, "html.parser")
-
-        mansions = []
-
-        if "aparts" in r1_url:
-            raw = parse_table(soup1)
-            for m in raw:
-                m["タイプ"] = get_type(soup1, m.pop("_apart_id", ""))
-            mansions = raw
-
-        elif "address" in r1_url:
-            for a in soup1.find_all("a", href=True):
-                t = a.get_text(strip=True)
-                if not (re.search(r'\d+丁目', t) or re.match(r'^\d+$', t)):
-                    continue
-                href = a["href"]
-                chome_url = BASE + href if href.startswith("/") else href
-                r2 = session.get(chome_url, timeout=15)
-                soup2 = BS(r2.text, "html.parser")
-                chunk = parse_table(soup2)
-                for m in chunk:
-                    m["タイプ"] = get_type(soup2, m.pop("_apart_id", ""))
-                mansions.extend(chunk)
-
-        if not mansions:
-            return [], "対象エリアにauひかり対応マンションがありません"
-
-        return mansions, ""
-
-    except Exception as e:
-        return [], f"エラー: {e}"
-
-
-def _scrape_au_playwright_unused(postal_code: str) -> tuple:
-    """Playwright版（現在は未使用・参考用）"""
-    zip_clean = re.sub(r'[^\d]', '', postal_code)
     mansions = []
     error = ""
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+                "--window-size=1280,800",
+            ]
         )
-        page = browser.new_page(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800},
+            locale="ja-JP",
+            timezone_id="Asia/Tokyo",
         )
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP', 'ja', 'en-US']});
+            window.chrome = {runtime: {}};
+        """)
+        page = context.new_page()
 
         def submit_form(pg):
             pg.goto("https://bb-application.au.kddi.com/auhikari/zipcode", timeout=30000)
@@ -442,14 +324,7 @@ def _scrape_au_playwright_unused(postal_code: str) -> tuple:
                 except Exception:
                     page.wait_for_timeout(2000)
                 mansions = extract_mansions(page)
-                if not mansions:
-                    # テーブルが見つからない場合、ページ内テキストから物件名を探す
-                    page_text = page.inner_text("body")
-                    if "マンション" not in page_text and "物件" not in page_text:
-                        error = f"対象エリアにauひかり対応マンションがありません"
-                    else:
-                        error = f"ページ構造変更の可能性あり（URL: {url.split('?')[0]}）"
-                else:
+                if mansions:
                     mansions = fetch_types(page, mansions)
 
             elif "address" in url:
@@ -467,9 +342,6 @@ def _scrape_au_playwright_unused(postal_code: str) -> tuple:
                     if t and t not in seen and (re.search(r'\d+丁目', t) or re.match(r'^\d+$', t)):
                         seen.add(t)
                         chome_links.append(t)
-
-                if not chome_links:
-                    error = f"住所選択ページで選択肢が見つかりません（URL: {url.split('?')[0]}）"
 
                 for ct in chome_links:
                     try:
@@ -498,7 +370,7 @@ def _scrape_au_playwright_unused(postal_code: str) -> tuple:
                     except Exception:
                         continue
             else:
-                error = f"予期しないページ: {url.split('?')[0]}"
+                error = "auサイトへの接続に失敗しました（時間をおいて再試行してください）"
 
         except PWTimeout:
             error = "タイムアウト: auサイトへの接続に失敗しました"
