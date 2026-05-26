@@ -4,7 +4,7 @@ import re
 import urllib.parse
 
 
-def scrape_au(zip_code: str):
+def scrape_au(zip_code: str, get_types: bool = True):
     z = re.sub(r'\D', '', zip_code)
     if len(z) != 7:
         return [], "郵便番号は7桁で入力してください"
@@ -30,22 +30,22 @@ def scrape_au(zip_code: str):
         try:
             page.goto("https://bb-application.au.kddi.com/auhikari/zipcode", timeout=30000)
             try:
-                page.wait_for_load_state("networkidle", timeout=10000)
+                page.wait_for_load_state("networkidle", timeout=5000)
             except Exception:
                 pass
             page.wait_for_load_state("domcontentloaded", timeout=15000)
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(1000)
 
             page.click('#sendzip1')
-            page.wait_for_timeout(300)
-            page.locator('#sendzip1').type(z[:3], delay=100)
-            page.wait_for_timeout(400)
+            page.wait_for_timeout(150)
+            page.locator('#sendzip1').type(z[:3], delay=80)
+            page.wait_for_timeout(200)
             page.click('#sendzip2')
+            page.wait_for_timeout(150)
+            page.locator('#sendzip2').type(z[3:], delay=80)
             page.wait_for_timeout(300)
-            page.locator('#sendzip2').type(z[3:], delay=100)
-            page.wait_for_timeout(500)
             page.check('#mantion')
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(600)
 
             page.evaluate("""() => {
                 document.querySelectorAll('input[type="submit"]').forEach(s => {
@@ -53,7 +53,7 @@ def scrape_au(zip_code: str):
                     s.style.removeProperty('display');
                 });
             }""")
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(300)
             page.locator('input[type="submit"]').first.click()
 
             page.wait_for_url(lambda u: "aparts" in u or "address" in u, timeout=30000)
@@ -61,7 +61,7 @@ def scrape_au(zip_code: str):
                 page.wait_for_load_state("domcontentloaded", timeout=10000)
             except Exception:
                 pass
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(1000)
 
             def get_mansions():
                 items = []
@@ -89,10 +89,10 @@ def scrape_au(zip_code: str):
                     if not radio:
                         return ""
                     radio.click()
-                    page.wait_for_timeout(300)
+                    page.wait_for_timeout(200)
                     page.click('text="次へ"', timeout=5000)
                     page.wait_for_url(lambda u: "apart" in u and "aparts" not in u, timeout=10000)
-                    page.wait_for_timeout(3000)
+                    page.wait_for_timeout(1500)
                     html = page.content()
                     m = re.search(r'タイプ([GVEMU])', html)
                     has_mini = 'ミニギガ' in html
@@ -107,7 +107,7 @@ def scrape_au(zip_code: str):
                         t = "ギガ"
                     page.go_back()
                     page.wait_for_load_state("domcontentloaded", timeout=10000)
-                    page.wait_for_timeout(500)
+                    page.wait_for_timeout(300)
                     return t
                 except Exception:
                     try:
@@ -125,8 +125,9 @@ def scrape_au(zip_code: str):
                     pass
                 mansions = get_mansions()
                 aparts_url = url
-                for m in mansions:
-                    m["type"] = get_type(m["apart_id"], aparts_url)
+                if get_types:
+                    for m in mansions:
+                        m["type"] = get_type(m["apart_id"], aparts_url)
                 results = mansions
 
             elif "address" in url:
@@ -150,15 +151,16 @@ def scrape_au(zip_code: str):
                         try:
                             page.wait_for_selector("table tr td", timeout=8000)
                         except Exception:
-                            page.wait_for_timeout(2000)
+                            page.wait_for_timeout(1500)
                         chunk = get_mansions()
                         aparts_url = page.url
-                        for m in chunk:
-                            m["type"] = get_type(m["apart_id"], aparts_url)
+                        if get_types:
+                            for m in chunk:
+                                m["type"] = get_type(m["apart_id"], aparts_url)
                         results.extend(chunk)
                         page.goto(adr_url)
                         page.wait_for_load_state("domcontentloaded", timeout=10000)
-                        page.wait_for_timeout(500)
+                        page.wait_for_timeout(300)
                     except Exception:
                         continue
 
@@ -195,6 +197,8 @@ def main():
     with col_btn:
         search_btn = st.button("検索", type="primary", use_container_width=True)
 
+    fetch_types = st.checkbox("タイプも取得する（+1〜2分）", value=True)
+
     st.write("**タイプ絞り込み**（複数選択可・何も選ばなければ全表示）")
     type_filter = st.pills("タイプ", TYPE_OPTIONS, selection_mode="multi", label_visibility="collapsed")
 
@@ -202,8 +206,9 @@ def main():
         if not zip_input.strip():
             st.error("郵便番号を入力してください")
         else:
-            with st.spinner("auサイトを検索中...（1〜2分かかります）"):
-                mansions, err = scrape_au(zip_input.strip())
+            spinner_msg = "auサイトを検索中...（1〜2分かかります）" if fetch_types else "auサイトを検索中...（15〜30秒）"
+            with st.spinner(spinner_msg):
+                mansions, err = scrape_au(zip_input.strip(), get_types=fetch_types)
 
             if err:
                 st.error(err)
