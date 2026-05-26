@@ -33,7 +33,11 @@ def scrape_au_mansions(postal_code: str) -> tuple:
         page = browser.new_page(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        try:
+            from playwright_stealth import stealth_sync
+            stealth_sync(page)
+        except Exception:
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         def submit_form(pg):
             pg.goto("https://bb-application.au.kddi.com/auhikari/zipcode", timeout=30000)
@@ -158,6 +162,10 @@ def scrape_au_mansions(postal_code: str) -> tuple:
             url = page.url
 
             if "aparts" in url:
+                try:
+                    page.wait_for_selector("table tr td", timeout=10000)
+                except Exception:
+                    page.wait_for_timeout(3000)
                 mansions = extract_mansions(page)
                 if mansions:
                     mansions = fetch_types(page, mansions)

@@ -1,6 +1,6 @@
 streamlit
 playwright
+playwright-stealth
 pandas
-ddgs
 requests
 beautifulsoup4
