@@ -173,19 +173,10 @@ def scrape_au_mansions(postal_code: str) -> tuple:
                 "--window-size=1280,800",
             ]
         )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800},
-            locale="ja-JP",
-            timezone_id="Asia/Tokyo",
+        page = browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-            Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP', 'ja', 'en-US']});
-            window.chrome = {runtime: {}};
-        """)
-        page = context.new_page()
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         def submit_form(pg):
             pg.goto("https://bb-application.au.kddi.com/auhikari/zipcode", timeout=30000)
@@ -469,7 +460,7 @@ def main():
             status.success(f"完了！{len(all_mansions)} 件見つかりました")
             st.session_state["df"] = pd.DataFrame(all_mansions)
         else:
-            status.empty()
+            status.warning("マンションが見つかりませんでした")
 
     if "df" in st.session_state:
         df = st.session_state["df"].copy()
