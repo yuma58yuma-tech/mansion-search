@@ -17,7 +17,6 @@ def scrape_au(zip_code: str, get_types: bool = True):
             args=[
                 "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
-                "--single-process", "--no-zygote",
                 "--disable-background-networking",
                 "--disable-default-apps", "--disable-sync",
                 "--disable-extensions",
@@ -62,12 +61,20 @@ def scrape_au(zip_code: str, get_types: bool = True):
             page.wait_for_timeout(300)
             page.locator('input[type="submit"]').first.click()
 
-            page.wait_for_url(lambda u: "aparts" in u or "address" in u, timeout=30000)
+            # lambdaを使わずポーリングでURL変化を待つ
+            for _ in range(30):
+                page.wait_for_timeout(1000)
+                if "aparts" in page.url or "address" in page.url:
+                    break
+            else:
+                cur = page.url
+                browser.close()
+                return [], f"auサイトへのアクセスに失敗しました（現在URL: {cur[:120]}）"
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=10000)
             except Exception:
                 pass
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(500)
 
             def get_mansions():
                 items = []
@@ -97,8 +104,11 @@ def scrape_au(zip_code: str, get_types: bool = True):
                     radio.click()
                     page.wait_for_timeout(200)
                     page.click('text="次へ"', timeout=5000)
-                    page.wait_for_url(lambda u: "apart" in u and "aparts" not in u, timeout=10000)
-                    page.wait_for_timeout(1500)
+                    for _ in range(10):
+                        page.wait_for_timeout(1000)
+                        if "apart" in page.url and "aparts" not in page.url:
+                            break
+                    page.wait_for_timeout(500)
                     html = page.content()
                     m = re.search(r'タイプ([GVEMU])', html)
                     has_mini = 'ミニギガ' in html
@@ -138,24 +148,22 @@ def scrape_au(zip_code: str, get_types: bool = True):
 
             elif "address" in url:
                 adr_url = url
-                base_url = "https://bb-application.au.kddi.com"
-                # テーブル内のリンクhrefを全て収集（テキスト依存をやめてURL直接遷移）
-                hrefs = []
-                seen_h = set()
+                # テーブル内の全リンクテキストを収集（フィルタなし）
+                link_texts = []
+                seen = set()
                 for el in page.query_selector_all("td a"):
-                    href = el.get_attribute("href") or ""
-                    if not href or href in seen_h:
-                        continue
-                    if href.startswith("javascript") or href == "#":
-                        continue
-                    seen_h.add(href)
-                    if href.startswith("/"):
-                        hrefs.append(base_url + href)
-                    elif href.startswith("http"):
-                        hrefs.append(href)
-                for href in hrefs:
+                    t = el.inner_text().strip()
+                    if t and t not in seen:
+                        seen.add(t)
+                        link_texts.append(t)
+                for text in link_texts:
                     try:
-                        page.goto(href, timeout=15000)
+                        # 毎回addressページに戻ってからクリック
+                        if "address" not in page.url:
+                            page.goto(adr_url, timeout=15000)
+                            page.wait_for_load_state("domcontentloaded", timeout=10000)
+                            page.wait_for_timeout(500)
+                        page.click(f'td a:has-text("{text}")', timeout=5000)
                         try:
                             page.wait_for_load_state("domcontentloaded", timeout=10000)
                         except Exception:
