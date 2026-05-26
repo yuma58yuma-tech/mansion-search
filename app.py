@@ -138,35 +138,40 @@ def scrape_au(zip_code: str, get_types: bool = True):
 
             elif "address" in url:
                 adr_url = url
-                links = []
-                seen = set()
-                for el in page.query_selector_all("td a, a"):
-                    t = el.inner_text().strip()
-                    if t and t not in seen and (re.search(r'\d+丁目', t) or re.match(r'^\d+$', t)):
-                        seen.add(t)
-                        links.append(t)
-                for ct in links:
+                base_url = "https://bb-application.au.kddi.com"
+                # テーブル内のリンクhrefを全て収集（テキスト依存をやめてURL直接遷移）
+                hrefs = []
+                seen_h = set()
+                for el in page.query_selector_all("td a"):
+                    href = el.get_attribute("href") or ""
+                    if not href or href in seen_h:
+                        continue
+                    if href.startswith("javascript") or href == "#":
+                        continue
+                    seen_h.add(href)
+                    if href.startswith("/"):
+                        hrefs.append(base_url + href)
+                    elif href.startswith("http"):
+                        hrefs.append(href)
+                for href in hrefs:
                     try:
-                        els = page.query_selector_all("td a, a")
-                        tgt = next((e for e in els if e.inner_text().strip() == ct), None)
-                        if tgt:
-                            tgt.click()
-                        else:
-                            page.click(f'text="{ct}"', timeout=5000)
-                        page.wait_for_url(lambda u: "aparts" in u, timeout=10000)
+                        page.goto(href, timeout=15000)
+                        try:
+                            page.wait_for_load_state("domcontentloaded", timeout=10000)
+                        except Exception:
+                            pass
                         try:
                             page.wait_for_selector("table tr td", timeout=8000)
                         except Exception:
                             page.wait_for_timeout(1500)
+                        if "aparts" not in page.url:
+                            continue
                         chunk = get_mansions()
                         aparts_url = page.url
                         if get_types:
                             for m in chunk:
                                 m["type"] = get_type(m["apart_id"], aparts_url)
                         results.extend(chunk)
-                        page.goto(adr_url)
-                        page.wait_for_load_state("domcontentloaded", timeout=10000)
-                        page.wait_for_timeout(300)
                     except Exception:
                         continue
 
