@@ -1,15 +1,7 @@
-import subprocess, sys
 import streamlit as st
 from playwright.sync_api import sync_playwright
 import re
 import urllib.parse
-
-@st.cache_resource
-def _ensure_playwright():
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
-        capture_output=True
-    )
 
 
 def scrape_au(zip_code: str):
@@ -194,7 +186,6 @@ def type_match(m_type: str, selected: list) -> bool:
 
 
 def main():
-    _ensure_playwright()
     st.set_page_config(page_title="マンション調べツール", layout="wide")
     st.title("マンション調べ効率化ツール")
 
