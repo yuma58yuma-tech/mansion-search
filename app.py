@@ -1,13 +1,18 @@
-import streamlit as st
-from playwright.sync_api import sync_playwright
+import base64
 import re
 import urllib.parse
 
+import streamlit as st
+from playwright.sync_api import sync_playwright
+
 
 def scrape_au(zip_code: str, get_types: bool = True):
+    """
+    Returns (results, error_str, screenshot_b64_or_None)
+    """
     z = re.sub(r'\D', '', zip_code)
     if len(z) != 7:
-        return [], "郵便番号は7桁で入力してください"
+        return [], "郵便番号は7桁で入力してください", None
 
     results = []
 
@@ -33,13 +38,18 @@ def scrape_au(zip_code: str, get_types: bool = True):
         except Exception:
             pass
 
-        def wait_for_url_contains(keywords, timeout_sec=30):
-            """lambdaの代わりにポーリングで URL 変化を待つ"""
-            for _ in range(timeout_sec):
+        def poll_url(keywords, secs=30):
+            for _ in range(secs):
                 page.wait_for_timeout(1000)
                 if any(k in page.url for k in keywords):
                     return True
             return False
+
+        def screenshot_b64():
+            try:
+                return base64.b64encode(page.screenshot()).decode()
+            except Exception:
+                return ""
 
         try:
             page.goto(
@@ -53,15 +63,19 @@ def scrape_au(zip_code: str, get_types: bool = True):
             page.wait_for_load_state("domcontentloaded", timeout=15000)
             page.wait_for_timeout(1000)
 
+            # 郵便番号を人間らしく入力（bot検知回避）
+            page.click('#sendzip1')
+            page.wait_for_timeout(150)
+            page.locator('#sendzip1').type(z[:3], delay=80)
+            page.wait_for_timeout(200)
+            page.click('#sendzip2')
+            page.wait_for_timeout(150)
+            page.locator('#sendzip2').type(z[3:], delay=80)
+            page.wait_for_timeout(300)
+
             # マンションを選択
             page.check('#mantion')
-            page.wait_for_timeout(500)
-
-            # 郵便番号入力
-            page.fill('#sendzip1', z[:3])
-            page.wait_for_timeout(200)
-            page.fill('#sendzip2', z[3:])
-            page.wait_for_timeout(300)
+            page.wait_for_timeout(600)
 
             # submitボタンを表示してクリック
             page.evaluate("""() => {
@@ -74,11 +88,19 @@ def scrape_au(zip_code: str, get_types: bool = True):
             page.wait_for_timeout(400)
             page.locator('input[type="submit"]').first.click()
 
-            # URL変化をポーリングで待つ
-            ok = wait_for_url_contains(["aparts", "address"], timeout_sec=30)
+            # URL変化を最大60秒ポーリング
+            ok = poll_url(["aparts", "address"], secs=60)
             if not ok:
+                # JSでフォーム直接送信を再試行
+                page.evaluate(
+                    "const f=document.querySelector('form'); if(f) f.submit();"
+                )
+                ok = poll_url(["aparts", "address"], secs=30)
+
+            if not ok:
+                shot = screenshot_b64()
                 browser.close()
-                return [], f"ページ遷移タイムアウト（URL: {page.url[:80]}）"
+                return [], f"ページ遷移タイムアウト（URL: {page.url[:80]}）", shot
 
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=10000)
@@ -86,7 +108,7 @@ def scrape_au(zip_code: str, get_types: bool = True):
                 pass
             page.wait_for_timeout(1000)
 
-            # ── マンション一覧を取得 ──────────────────────────────
+            # ─── マンション一覧を取得 ──────────────────────────────
             def get_mansions():
                 items = []
                 for row in page.query_selector_all("table tr"):
@@ -106,7 +128,7 @@ def scrape_au(zip_code: str, get_types: bool = True):
                                   "apart_id": apart_id, "type": ""})
                 return items
 
-            # ── タイプ取得 ───────────────────────────────────────
+            # ─── タイプ取得 ──────────────────────────────────────
             def get_type(apart_id, aparts_url):
                 if not apart_id:
                     return ""
@@ -122,7 +144,6 @@ def scrape_au(zip_code: str, get_types: bool = True):
                         page.click('text="次へ"', timeout=5000)
                     except Exception:
                         return ""
-                    # ポーリングで apart ページを待つ
                     for _ in range(15):
                         page.wait_for_timeout(1000)
                         if "apart" in page.url and "aparts" not in page.url:
@@ -155,7 +176,7 @@ def scrape_au(zip_code: str, get_types: bool = True):
                         pass
                     return ""
 
-            # ── aparts / address 分岐 ────────────────────────────
+            # ─── aparts / address 分岐 ───────────────────────────
             cur = page.url
             if "aparts" in cur:
                 try:
@@ -171,7 +192,6 @@ def scrape_au(zip_code: str, get_types: bool = True):
 
             elif "address" in cur:
                 adr_url = cur
-                # リンクテキスト一覧を先に収集
                 seen, links_text = set(), []
                 for el in page.query_selector_all("td a, a"):
                     t = el.inner_text().strip()
@@ -189,8 +209,7 @@ def scrape_au(zip_code: str, get_types: bool = True):
                             tgt.click()
                         else:
                             page.click(f'text="{ct}"', timeout=5000)
-                        ok = wait_for_url_contains(["aparts"], timeout_sec=15)
-                        if not ok:
+                        if not poll_url(["aparts"], secs=15):
                             page.goto(adr_url)
                             continue
                         try:
@@ -212,17 +231,20 @@ def scrape_au(zip_code: str, get_types: bool = True):
                     except Exception:
                         continue
             else:
+                shot = screenshot_b64()
                 browser.close()
-                return [], f"ページ遷移失敗（URL: {cur[:100]}）"
+                return [], f"ページ遷移失敗（URL: {cur[:100]}）", shot
 
         except Exception as e:
             browser.close()
-            return [], f"エラー: {e}"
+            return [], f"エラー: {e}", None
 
         browser.close()
 
-    return results, ""
+    return results, "", None
 
+
+# ────────────────────────────────────────────────────────────────
 
 TYPE_OPTIONS = ["G", "E", "V", "ミニギガ", "ギガ"]
 
@@ -262,13 +284,21 @@ def main():
         if not zip_input.strip():
             st.error("郵便番号を入力してください")
         else:
-            msg = "auサイトを検索中...（1〜2分かかります）" if fetch_types \
-                else "auサイトを検索中...（15〜30秒）"
+            msg = ("auサイトを検索中...（1〜2分かかります）" if fetch_types
+                   else "auサイトを検索中...（15〜30秒）")
             with st.spinner(msg):
-                mansions, err = scrape_au(zip_input.strip(), get_types=fetch_types)
+                mansions, err, shot = scrape_au(
+                    zip_input.strip(), get_types=fetch_types
+                )
 
             if err:
                 st.error(err)
+                if shot:
+                    st.image(
+                        base64.b64decode(shot),
+                        caption="エラー発生時の画面（au サイト）",
+                        use_container_width=True,
+                    )
             elif not mansions:
                 st.warning("対応マンションが見つかりませんでした")
             else:
