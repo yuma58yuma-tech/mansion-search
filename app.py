@@ -54,14 +54,10 @@ def scrape_au(zip_code: str, get_types: bool = True):
         try:
             page.goto(
                 "https://bb-application.au.kddi.com/auhikari/zipcode",
-                timeout=30000
+                wait_until="domcontentloaded",
+                timeout=60000
             )
-            try:
-                page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                pass
-            page.wait_for_load_state("domcontentloaded", timeout=15000)
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(1500)
 
             # 郵便番号を人間らしく入力（bot検知回避）
             page.click('#sendzip1')
