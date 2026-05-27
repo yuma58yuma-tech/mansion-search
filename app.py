@@ -78,28 +78,16 @@ def scrape_au(zip_code: str, get_types: bool = True):
         r = session.get(f"{BASE_URL}/auhikari/zipcode", timeout=30)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # 全inputフィールドをデバッグ用に収集
-        all_inputs = [
-            {"name": i.get("name"), "id": i.get("id"),
-             "type": i.get("type"), "value": i.get("value")}
-            for i in soup.find_all("input")
-        ]
-        all_selects = [
-            {"name": s.get("name"), "id": s.get("id"),
-             "options": [o.get("value") for o in s.find_all("option")]}
-            for s in soup.find_all("select")
-        ]
-
         # 隠しフィールド収集
-        form_data = {"sendzip1": z[:3], "sendzip2": z[3:], "type": "mantion"}
+        form_data = {
+            "hometype": "apart",   # マンション/アパート
+            "zip1": z[:3],
+            "zip2": z[3:],
+            "tel1": "", "tel2": "", "tel3": "",
+        }
         for inp in soup.find_all("input", {"type": "hidden"}):
             if inp.get("name"):
                 form_data[inp["name"]] = inp.get("value", "")
-
-        # submitボタンのname/valueも追加
-        submit_btn = soup.find("input", {"type": "submit"})
-        if submit_btn and submit_btn.get("name"):
-            form_data[submit_btn["name"]] = submit_btn.get("value", "")
 
         # フォーム送信
         session.headers["Referer"] = f"{BASE_URL}/auhikari/zipcode"
@@ -138,12 +126,9 @@ def scrape_au(zip_code: str, get_types: bool = True):
             snippet = re.sub(r'\s+', ' ', r.text[:300]) if r.text else "(空)"
             return [], (
                 f"アクセス失敗\n"
-                f"POST後URL: {r.url}\n"
-                f"ステータス: {r.status_code}\n"
-                f"送信データ: {form_data}\n"
-                f"フォームのinput一覧: {all_inputs}\n"
-                f"フォームのselect一覧: {all_selects}\n"
-                f"内容の冒頭:\n{snippet}"
+                f"URL: {r.url}\n"
+                f"Status: {r.status_code}\n"
+                f"内容: {snippet}"
             )
 
         return results, ""
