@@ -1,3 +1,4 @@
 streamlit
-playwright
-playwright-stealth
+requests
+beautifulsoup4
+urllib3
