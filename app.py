@@ -118,7 +118,13 @@ def scrape_au(zip_code: str, get_types: bool = True):
                     continue
 
         else:
-            return [], f"アクセス失敗（URL: {r.url[:100]}）"
+            snippet = re.sub(r'\s+', ' ', r.text[:400]) if r.text else "(空)"
+            return [], (
+                f"アクセス失敗\n"
+                f"リダイレクト先: {r.url}\n"
+                f"ステータス: {r.status_code}\n"
+                f"内容の冒頭:\n{snippet}"
+            )
 
         return results, ""
 
